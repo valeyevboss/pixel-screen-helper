@@ -53,6 +53,37 @@ local Icons = {
     logo = nil
 }
 
+-- Таблица статистики
+local statsData = {
+    total = 0,
+    time_used = 0,
+    time_not_used = 0,
+    flash_used = 0,
+    bodycam_clicks = 0,
+    sounds = {},
+    history = {},
+    lastUpdate = "Не определено"
+}
+
+-- Статистика за текущую сессию
+local sessionScreenshots = 0
+
+-- Таблица с итоговыми значениями статистики для вывода в UI
+local calculatedStats = {
+    today = 0,
+    week = 0,
+    month = 0,
+    year = 0,
+    total = 0,
+    session = 0,
+    time_used = 0,
+    time_not_used = 0,
+    flash_used = 0,
+    bodycam_clicks = 0,
+    favoriteSound = "Не определено",
+    lastUpdate = "Никогда"
+}
+
 -- Переменные оверлея уведомлений
 local ovlPushM = {
     -- Состояние и данные
@@ -195,14 +226,67 @@ local function keyToName(key)
     return "VK_" .. tostring(key)
 end
 
+-- Функция расчёта периодов (24ч, 7д, месяц, год)
+local function updateStatsData()
+    calculatedStats.total = statsData.total or 0
+    calculatedStats.session = sessionScreenshots
+    calculatedStats.time_used = statsData.time_used or 0
+    calculatedStats.time_not_used = statsData.time_not_used or 0
+    calculatedStats.flash_used = statsData.flash_used or 0
+    calculatedStats.bodycam_clicks = statsData.bodycam_clicks or 0
+    calculatedStats.lastUpdate = statsData.lastUpdate or "Не определено"
+
+    -- Расчет временных периодов на основе истории
+    local now = os.time()
+    local todayCount, weekCount, monthCount, yearCount = 0, 0, 0, 0
+
+    if statsData.history then
+        for dateStr, count in pairs(statsData.history) do
+            local y, m, d = dateStr:match("(%d+)-(%d+)-(%d+)")
+            if y and m and d then
+                local recTime = os.time({year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12})
+                local diffDays = math.floor((now - recTime) / 86400)
+
+                if diffDays < 1 then todayCount = todayCount + count end
+                if diffDays < 7 then weekCount = weekCount + count end
+                if diffDays < 30 then monthCount = monthCount + count end
+                if diffDays < 365 then yearCount = yearCount + count end
+            end
+        end
+    end
+
+    calculatedStats.today = todayCount
+    calculatedStats.week = weekCount
+    calculatedStats.month = monthCount
+    calculatedStats.year = yearCount
+
+    -- Определение любимого звука
+    local maxSoundClicks = 0
+    local favSoundIdx = nil
+    if statsData.sounds then
+        for soundIdxStr, clicks in pairs(statsData.sounds) do
+            if clicks > maxSoundClicks then
+                maxSoundClicks = clicks
+                favSoundIdx = tonumber(soundIdxStr)
+            end
+        end
+    end
+
+    if favSoundIdx and soundNames and soundNames[favSoundIdx] then
+        calculatedStats.favoriteSound = u8(soundNames[favSoundIdx])
+    else
+        calculatedStats.favoriteSound = u8"Нет данных"
+    end
+end
+
 -- =========================
 -- UI стили
 -- =========================
 
 -- Цветовая палитра
-local bgMatte      = imgui.ImVec4(0.05, 0.05, 0.05, 1.00) -- #0C0C0C
-local cardBg       = imgui.ImVec4(0.08, 0.08, 0.08, 1.00) -- #151515
-local borderClr    = imgui.ImVec4(0.13, 0.13, 0.13, 1.00) -- #212121
+local bgMatte      = imgui.ImVec4(0.05, 0.05, 0.05, 1.00)
+local cardBg       = imgui.ImVec4(0.08, 0.08, 0.08, 1.00)
+local borderClr    = imgui.ImVec4(0.13, 0.13, 0.13, 1.00)
 local separatorClr = imgui.ImVec4(0.13, 0.13, 0.13, 1.00)
 
 -- Цвета для кнопок
@@ -527,6 +611,14 @@ local function getDefaultScreensFolder()
     end
 end
 
+-- Функция для открытия папки со скриншотами в проводнике
+local function openScreensFolder()
+    local path = getDefaultScreensFolder()
+    os.execute('explorer "' .. path .. '"')
+    sampAddChatMessage("{9B59B6}[Pixel SH]: {FFFFFF}Папка со скриншотами открыта.", -1)
+	ovlPushM.show("success", "Папка со скриншотами открыта.", 3)
+end
+
 -- Создание папок
 local function getFolderPSH()
     local folder = "moonloader/config/pixel_screenhelper"
@@ -538,6 +630,10 @@ end
 
 local function getSettingsPath()
     return getFolderPSH().."/"..nickname.."_settings.json"
+end
+
+local function getStatsPath()
+    return getFolderPSH().."/"..nickname.."_stats.json"
 end
 
 -- Сохранение настроек
@@ -622,6 +718,36 @@ local function resetSettings()
     sampAddChatMessage("{9B59B6}[Pixel SC]: {FFFFFF}Настройки сброшены к дефолтным значениям.", -1)
 end
 
+-- Сохранение статистики
+local function saveStats()
+    local path = getStatsPath()
+    local file = io.open(path, "w+")
+    if file then
+        statsData.lastUpdate = os.date("%d.%m.%Y %H:%M:%S")
+        file:write(encodeJson(statsData))
+        file:close()
+    end
+end
+
+-- Загрузка статистики
+local function loadStats()
+    local path = getStatsPath()
+    if doesFileExist(path) then
+        local file = io.open(path, "r")
+        if file then
+            local content = file:read("*a")
+            file:close()
+            local decoded = decodeJson(content)
+            if type(decoded) == "table" then
+                statsData = decoded
+                statsData.sounds = statsData.sounds or {}
+                statsData.history = statsData.history or {}
+            end
+        end
+    end
+    updateStatsData()
+end
+
 -- =========================
 -- Вспомогательные функции
 -- =========================
@@ -696,9 +822,44 @@ function ovlPushM.hide()
     ovlPushM.queue = {}
 end
 
+-- Функция фиксации нового скриншота
+local function checkScreenshotStats()
+    sessionScreenshots = sessionScreenshots + 1
+    statsData.total = (statsData.total or 0) + 1
+
+    -- Авто-тайм
+    if cfg.autoTimeEnabled[0] then
+        statsData.time_used = (statsData.time_used or 0) + 1
+    else
+        statsData.time_not_used = (statsData.time_not_used or 0) + 1
+    end
+
+    -- Вспышка
+    if cfg.flashEnabled[0] then
+        statsData.flash_used = (statsData.flash_used or 0) + 1
+    end
+
+    -- Звук
+    if cfg.pushSound[0] then
+        local currentIdx = tostring(cfg.selectedSoundIndex[0] + 1)
+        statsData.sounds[currentIdx] = (statsData.sounds[currentIdx] or 0) + 1
+    end
+
+    -- Запись по датам (YYYY-MM-DD)
+    local todayKey = os.date("%Y-%m-%d")
+    statsData.history[todayKey] = (statsData.history[todayKey] or 0) + 1
+
+    saveStats()
+    updateStatsData()
+end
+
 -- Делаем скриншот (с эффектами, настройками)
 local function takeTimedScreenshot()
     lua_thread.create(function()
+	
+		-- Фиксируем скриншот в статистику
+		checkScreenshotStats()
+		
         -- 1. Тайм перед скриншотом
         if cfg.autoTimeEnabled[0] then
             sampSendChat("/time")
@@ -729,6 +890,20 @@ end
 -- Открытие главного окна
 function cmd_smenu()
     window.mainMenu[0] = not window.mainMenu[0]
+end
+
+-- Открытие папки скриншотов
+function cmd_scheck()
+    openScreensFolder()
+end
+
+-- Просмотр доступных команд
+function cmd_scrhelp()
+    local prefix = "{9B59B6}[Pixel SH]: {FFFFFF}"
+    sampAddChatMessage(prefix .. "Список всех доступных команд:", -1)
+    sampAddChatMessage(prefix .. "{9B59B6}/smenu{FFFFFF} - открыть главное меню", -1)
+    sampAddChatMessage(prefix .. "{9B59B6}/scheck{FFFFFF} - открывает папку со скриншотами", -1)
+    sampAddChatMessage(prefix .. "{9B59B6}/scrhelp{FFFFFF} - просмотр всех команд", -1)
 end
 
 -- =========================
@@ -788,9 +963,96 @@ imgui.OnFrame(function() return window.mainMenu[0] end, function(player)
         -- Правая часть: Основной контент
         imgui.BeginChild("ContentArea", imgui.ImVec2(0, 0), true)
             
-            if selectedTab == 1 then
+			if selectedTab == 1 then
                 imgui.TextColored(textColor, u8"Статистика")
-                -- Тут позже сделаю статистику с подключением отдельного _stats.json файла.
+                imgui.Separator()
+                imgui.Spacing()
+
+                -- Карточка 1: Основная статистика по периодам
+                imgui.BeginChild("MainStatsCard", imgui.ImVec2(0, 180), true, imgui.WindowFlags.NoScrollbar)
+                    imgui.SetCursorPos(imgui.ImVec2(12, 12))
+                    imgui.TextColored(purple1, u8"ВАША СТАТИСТИКА")
+                    imgui.Spacing()
+
+                    local halfWidth = (imgui.GetWindowWidth() - 36) / 2
+
+                    imgui.BeginGroup()
+                        imgui.TextColored(gray1, u8"За последние 24 часа:")
+                        imgui.SameLine()
+                        imgui.TextColored(textColor, tostring(calculatedStats.today))
+
+                        imgui.Spacing()
+
+                        imgui.TextColored(gray1, u8"За последние 7 дней:")
+                        imgui.SameLine()
+                        imgui.TextColored(textColor, tostring(calculatedStats.week))
+
+                        imgui.Spacing()
+
+                        imgui.TextColored(gray1, u8"За текущую сессию:")
+                        imgui.SameLine()
+                        imgui.TextColored(textColor, tostring(calculatedStats.session))
+                    imgui.EndGroup()
+
+                    imgui.SameLine(halfWidth + 24)
+
+                    imgui.BeginGroup()
+                        imgui.TextColored(gray1, u8"За последний месяц:")
+                        imgui.SameLine()
+                        imgui.TextColored(textColor, tostring(calculatedStats.month))
+
+                        imgui.Spacing()
+
+                        imgui.TextColored(gray1, u8"За последний год:")
+                        imgui.SameLine()
+                        imgui.TextColored(textColor, tostring(calculatedStats.year))
+
+                        imgui.Spacing()
+
+                        imgui.TextColored(gray1, u8"Всего сделано:")
+                        imgui.SameLine()
+                        imgui.TextColored(textColor, tostring(calculatedStats.total))
+                    imgui.EndGroup()
+
+                    imgui.Spacing()
+                    imgui.Separator()
+                    imgui.Spacing()
+
+                    imgui.TextColored(yellow1, u8"Последнее обновление статистики: ")
+                    imgui.SameLine()
+                    imgui.TextColored(textColor, u8(calculatedStats.lastUpdate))
+                imgui.EndChild()
+
+                imgui.Spacing()
+
+                -- Карточка 2: Интересные метрики и эффекты
+                imgui.BeginChild("MetricsStatsCard", imgui.ImVec2(0, 160), true, imgui.WindowFlags.NoScrollbar)
+                    imgui.SetCursorPos(imgui.ImVec2(12, 12))
+                    imgui.TextColored(purple1, u8"ИНТЕРЕСНЫЕ МЕТРИКИ И ЭФФЕКТЫ")
+                    imgui.Spacing()
+
+                    imgui.TextColored(gray1, u8"Использование /time:")
+                    imgui.SameLine()
+                    imgui.TextColored(textColor, string.format(u8"%d с таймом / %d без тайма", calculatedStats.time_used, calculatedStats.time_not_used))
+
+                    imgui.Spacing()
+
+                    imgui.TextColored(gray1, u8"Скриншотов со вспышкой:")
+                    imgui.SameLine()
+                    imgui.TextColored(textColor, tostring(calculatedStats.flash_used))
+
+                    imgui.Spacing()
+
+                    imgui.TextColored(gray1, u8"Активаций боди-камеры:")
+                    imgui.SameLine()
+                    imgui.TextColored(textColor, tostring(calculatedStats.bodycam_clicks))
+
+                    imgui.Spacing()
+
+                    imgui.TextColored(gray1, u8"Любимый звук уведомления:")
+                    imgui.SameLine()
+                    imgui.TextColored(textColor, calculatedStats.favoriteSound)
+                imgui.EndChild()
                 
 			elseif selectedTab == 2 then
 				imgui.TextColored(textColor, u8"Визуальные спецэффекты")
@@ -1208,9 +1470,12 @@ function main()
 	
 	-- Регистрация команд
     sampRegisterChatCommand("smenu", cmd_smenu)
+	sampRegisterChatCommand("scheck", cmd_scheck)
+	sampRegisterChatCommand("scrhelp", cmd_scrhelp)
 	
 	-- Загрузка данных из файлов конфигурации
 	loadSettings()
+	loadStats()
 
     while true do
         wait(0)
@@ -1224,6 +1489,11 @@ function main()
         local bodycamKey = settings.hotkeys.bodyCamera
         if bodycamKey and bodycamKey ~= 0 and wasKeyPressed(bodycamKey) and not sampIsChatInputActive() and not sampIsDialogActive() then
             settings.bodycamState = not settings.bodycamState
+			
+			-- Отправляем в статистику
+			statsData.bodycam_clicks = (statsData.bodycam_clicks or 0) + 1
+			saveStats()
+			updateStatsData()
             
             if settings.bodycamState then
                 sampSendChat("/bodycamera")
